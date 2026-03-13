@@ -1,9 +1,14 @@
 # Full-Stack Blog Application
 
-A simple blog platform built with Node.js/Express and React.
+A simple blog platform built with **Node.js/Express**, **React 19**, and **PostgreSQL** using **Prisma**.
+
+## 🚀 Recent Updates
+- **Migration to PostgreSQL:** Replaced MongoDB with PostgreSQL for better data relational management.
+- **ORM Transition:** Now using **Prisma 6** for type-safe database queries.
+- **Improved Architecture:** Cleaner separation between server logic and database schemas.
 
 ## Project Structure
-- `server/`: Express API with MongoDB (Mongoose) + JWT auth.
+- `server/`: Express API with PostgreSQL (Prisma) + JWT auth.
 - `client/`: React frontend built with Vite and TypeScript.
 
 ## Getting Started
@@ -12,21 +17,12 @@ A simple blog platform built with Node.js/Express and React.
 ```bash
 cd server
 npm install
+npx prisma generate
 npm run dev
 ```
 The server will run on [http://localhost:5000](http://localhost:5000).
 
-Create `.env` from `.env.example` (Mongo local default):
-```bash
-copy .env.example .env
-```
-
-#### MongoDB (Recommended: Docker)
-From the project root:
-```bash
-docker compose up -d
-```
-This exposes MongoDB on `mongodb://127.0.0.1:27017` (matches `.env.example`).
+**Note:** Ensure you have PostgreSQL installed and a database named `blogdb` created. Configure your `.env` following the `.env.example`.
 
 ### 2. Start the Frontend
 ```bash
@@ -37,10 +33,28 @@ npm run dev
 The frontend will run on [http://localhost:5173](http://localhost:5173).
 
 ## Features
-- List all blog posts.
+- List all blog posts with pagination and search.
 - View post details.
-- Register/login (JWT).
-- Create/edit/delete posts (requires login; only owner or admin can edit/delete).
+- User authentication (Register/Login with JWT).
+- Role-based access control (User and Admin).
+- Full CRUD for blog posts (Owner/Admin only).
+
+## 🗺️ Roadmap
+### Phase 1: Core Enhancements
+- [ ] Add categories/tags to blog posts.
+- [ ] Implement image uploads for post thumbnails using Cloudinary or AWS S3.
+- [ ] Add user profile pictures and bio.
+
+### Phase 2: Social Features
+- [ ] Comment system for each post.
+- [ ] "Like" or "Heart" functionality for posts.
+- [ ] Share buttons for social media.
+
+### Phase 3: Advanced
+- [ ] Admin Dashboard for user management and statistics.
+- [ ] Full-text search using PostgreSQL indexes.
+- [ ] Dark mode toggle for the UI.
+- [ ] Deployment guide for Render/Vercel/Heroku.
 
 ## API Notes
 - `GET /api/posts` supports `?page=1&limit=20&q=search`.
