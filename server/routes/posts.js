@@ -1,14 +1,10 @@
 const express = require('express');
 const { z } = require('zod');
-const Post = require('../models/Post');
+const prisma = require('../lib/prisma');
 const { authRequired } = require('../middleware/auth');
 const { validateBody } = require('../middleware/validate');
 
 const router = express.Router();
-
-function escapeRegex(input) {
-  return String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 const postUpsertSchema = z.object({
   title: z.string().trim().min(3).max(200),
@@ -23,39 +19,42 @@ router.get('/', async (req, res) => {
     const limit = Math.min(100, Math.max(1, limitRaw));
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
-    const filter = {};
+    const where = {};
     if (q) {
-      const re = new RegExp(escapeRegex(q), 'i');
-      filter.$or = [{ title: re }, { content: re }];
+      where.OR = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { content: { contains: q, mode: 'insensitive' } },
+      ];
     }
 
     const [total, posts] = await Promise.all([
-      Post.countDocuments(filter),
-      Post.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .populate('author', 'name')
-      .lean(),
+      prisma.post.count({ where }),
+      prisma.post.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: { author: { select: { id: true, name: true } } },
+      }),
     ]);
 
     res.set('X-Total-Count', String(total));
     res.set('X-Page', String(page));
     res.set('X-Limit', String(limit));
 
-    // Keep response compatible with existing client fields.
     const shaped = posts.map((p) => ({
-      id: p._id,
+      id: p.id,
       title: p.title,
       content: p.content,
       author: p.author?.name || 'Unknown',
       created_at: p.createdAt,
       updated_at: p.updatedAt,
-      author_id: p.author?._id,
+      author_id: p.author?.id,
     }));
 
     return res.json(shaped);
   } catch (err) {
+    console.error('List posts error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
@@ -63,19 +62,27 @@ router.get('/', async (req, res) => {
 // Public: get one post
 router.get('/:id', async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id).populate('author', 'name').lean();
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ message: 'Invalid id' });
+
+    const post = await prisma.post.findUnique({
+      where: { id },
+      include: { author: { select: { id: true, name: true } } },
+    });
     if (!post) return res.status(404).json({ message: 'Post not found' });
+
     return res.json({
-      id: post._id,
+      id: post.id,
       title: post.title,
       content: post.content,
       author: post.author?.name || 'Unknown',
       created_at: post.createdAt,
       updated_at: post.updatedAt,
-      author_id: post.author?._id,
+      author_id: post.author?.id,
     });
   } catch (err) {
-    return res.status(400).json({ message: 'Invalid id' });
+    console.error('Get post error:', err);
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -84,23 +91,26 @@ router.post('/', authRequired, validateBody(postUpsertSchema), async (req, res) 
   try {
     const { title, content } = req.body;
 
-    const post = await Post.create({
-      title,
-      content,
-      author: req.user.id,
+    const post = await prisma.post.create({
+      data: {
+        title,
+        content,
+        authorId: Number.parseInt(req.user.id, 10),
+      },
+      include: { author: { select: { id: true, name: true } } },
     });
 
-    const populated = await Post.findById(post._id).populate('author', 'name').lean();
     return res.status(201).json({
-      id: populated._id,
-      title: populated.title,
-      content: populated.content,
-      author: populated.author?.name || 'Unknown',
-      created_at: populated.createdAt,
-      updated_at: populated.updatedAt,
-      author_id: populated.author?._id,
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      author: post.author?.name || 'Unknown',
+      created_at: post.createdAt,
+      updated_at: post.updatedAt,
+      author_id: post.author?.id,
     });
   } catch (err) {
+    console.error('Create post error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
@@ -108,48 +118,57 @@ router.post('/', authRequired, validateBody(postUpsertSchema), async (req, res) 
 // Protected: update post (owner or admin)
 router.put('/:id', authRequired, validateBody(postUpsertSchema), async (req, res) => {
   try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ message: 'Invalid id' });
+
     const { title, content } = req.body;
 
-    const post = await Post.findById(req.params.id);
+    const post = await prisma.post.findUnique({ where: { id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
 
-    const isOwner = post.author.toString() === req.user.id;
+    const isOwner = post.authorId === Number.parseInt(req.user.id, 10);
     const isAdmin = req.user.role === 'admin';
     if (!isOwner && !isAdmin) return res.status(403).json({ message: 'Forbidden' });
 
-    post.title = title;
-    post.content = content;
-    await post.save();
+    const updated = await prisma.post.update({
+      where: { id },
+      data: { title, content },
+      include: { author: { select: { id: true, name: true } } },
+    });
 
-    const populated = await Post.findById(post._id).populate('author', 'name').lean();
     return res.json({
-      id: populated._id,
-      title: populated.title,
-      content: populated.content,
-      author: populated.author?.name || 'Unknown',
-      created_at: populated.createdAt,
-      updated_at: populated.updatedAt,
-      author_id: populated.author?._id,
+      id: updated.id,
+      title: updated.title,
+      content: updated.content,
+      author: updated.author?.name || 'Unknown',
+      created_at: updated.createdAt,
+      updated_at: updated.updatedAt,
+      author_id: updated.author?.id,
     });
   } catch (err) {
-    return res.status(400).json({ message: 'Invalid id' });
+    console.error('Update post error:', err);
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Protected: delete post (owner or admin)
 router.delete('/:id', authRequired, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ message: 'Invalid id' });
+
+    const post = await prisma.post.findUnique({ where: { id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
 
-    const isOwner = post.author.toString() === req.user.id;
+    const isOwner = post.authorId === Number.parseInt(req.user.id, 10);
     const isAdmin = req.user.role === 'admin';
     if (!isOwner && !isAdmin) return res.status(403).json({ message: 'Forbidden' });
 
-    await Post.deleteOne({ _id: post._id });
+    await prisma.post.delete({ where: { id } });
     return res.json({ message: 'Deleted successfully' });
   } catch (err) {
-    return res.status(400).json({ message: 'Invalid id' });
+    console.error('Delete post error:', err);
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 

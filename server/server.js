@@ -1,18 +1,20 @@
-const mongoose = require('mongoose');
+const prisma = require('./lib/prisma');
 require('dotenv').config();
 
 const { createApp } = require('./app');
 const PORT = process.env.PORT || 5000;
 
 async function start() {
-  if (!process.env.MONGODB_URI) {
-    throw new Error('Missing MONGODB_URI');
+  if (!process.env.DATABASE_URL) {
+    throw new Error('Missing DATABASE_URL');
   }
   if (!process.env.JWT_SECRET) {
     throw new Error('Missing JWT_SECRET');
   }
 
-  await mongoose.connect(process.env.MONGODB_URI);
+  // Verify database connection
+  await prisma.$connect();
+  console.log('Database connected successfully');
 
   const app = createApp();
   app.listen(PORT, () => {
